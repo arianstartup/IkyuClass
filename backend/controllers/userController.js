@@ -25,6 +25,7 @@ const registerTeacher = async (req, res) => {
       lastName,
       subjectTaught,
       qualifications,
+      [], // Empty availability array initially
       { initialPasswordPlaceholder: password } // Storing password here is NOT secure for production
     );
 
@@ -35,19 +36,99 @@ const registerTeacher = async (req, res) => {
     await teacherRef.update({ uid: teacherRef.id });
     const teacherDoc = await teacherRef.get();
 
-    console.log('Teacher registered successfully:', teacherRef.id);
+    console.log('Teacher registered successfully (legacy endpoint):', teacherRef.id);
     res.status(201).json({
-      message: 'Teacher registered successfully!',
+      message: 'Teacher registered successfully! (Legacy Endpoint)',
       teacherId: teacherRef.id,
       data: teacherDoc.data()
     });
 
   } catch (error) {
-    console.error('Error registering teacher:', error);
-    res.status(500).json({ message: 'Error registering teacher.', error: error.message });
+    console.error('Error registering teacher (legacy endpoint):', error);
+    res.status(500).json({ message: 'Error registering teacher (legacy endpoint).', error: error.message });
   }
 };
 
+
+const registerTeacherFinal = async (req, res) => {
+  try {
+    const { email, firstName, lastName, subjectTaught, qualifications, password, phoneNumber /*, temporaryAuthToken */ } = req.body;
+
+    // Basic validation for core fields (similar to legacy, but phoneNumber is key)
+    if (!email || !firstName || !lastName || !subjectTaught || !qualifications || !password || !phoneNumber) {
+      return res.status(400).json({ message: 'Missing required fields for final teacher registration.' });
+    }
+
+    // **Verification Check**
+    // Option 1: Check temporaryAuthToken (if implemented and passed from frontend)
+    // For now, we'll use Option 2: Check Firestore 'verificationCodes' collection.
+    const verificationCodeRef = db.collection('verificationCodes').doc(phoneNumber);
+    const verificationDoc = await verificationCodeRef.get();
+
+    if (!verificationDoc.exists) {
+        return res.status(400).json({ message: 'Phone number verification record not found. Please verify your phone number first.' });
+    }
+    const verificationData = verificationDoc.data();
+    if (!verificationData.verified) {
+        return res.status(400).json({ message: 'Phone number not verified. Please complete OTP verification.' });
+    }
+    // Consider checking verificationData.expiresAt as well, or if the token itself has an expiry.
+    // For simplicity, if 'verified' is true, we proceed.
+
+    // TODO: Optional: consume the temporaryAuthToken or mark verificationCode as used for this registration.
+    // For example, you might want to delete the verificationDoc or set a flag like `registrationCompleted: true`
+    // to prevent re-use of the same OTP verification for multiple registrations.
+    // await verificationCodeRef.update({ registrationAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
+
+
+    // Check if a teacher with this email or phone number already exists
+    const emailCheck = await db.collection('teachers').where('email', '==', email).limit(1).get();
+    if (!emailCheck.empty) {
+        return res.status(409).json({ message: 'A teacher with this email already exists.' });
+    }
+    const phoneCheck = await db.collection('teachers').where('phoneNumber', '==', phoneNumber).limit(1).get();
+    if (!phoneCheck.empty) {
+        return res.status(409).json({ message: 'A teacher with this phone number already exists.' });
+    }
+
+
+    const newTeacherData = createTeacher(
+      null, // Firestore will generate ID
+      email,
+      firstName,
+      lastName,
+      subjectTaught,
+      qualifications,
+      [], // Default empty availability
+      {
+        initialPasswordPlaceholder: password, // NOT secure for production
+        phoneNumber: phoneNumber, // Store verified phone number
+        phoneNumberVerified: true
+      }
+    );
+
+    const teacherRef = await db.collection('teachers').add(newTeacherData);
+    await teacherRef.update({ uid: teacherRef.id }); // Add Firestore generated ID as uid
+    const teacherDoc = await teacherRef.get();
+
+    // Optionally, delete or invalidate the OTP record after successful registration
+    // await verificationCodeRef.delete(); // Or update a status field
+
+    console.log('Teacher final registration successful:', teacherRef.id);
+    res.status(201).json({
+      message: 'Teacher registration successful with phone verification!',
+      teacherId: teacherRef.id,
+      data: teacherDoc.data()
+    });
+
+  } catch (error) {
+    console.error('Error in final teacher registration:', error);
+    res.status(500).json({ message: 'Error in final teacher registration.', error: error.message });
+  }
+};
+
+
 module.exports = {
-  registerTeacher,
+  registerTeacher, // Keep legacy for now, or deprecate
+  registerTeacherFinal,
 };

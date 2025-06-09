@@ -41,21 +41,39 @@ const ShoppingCart = () => {
                 />
               </div>
               <div>
-                <Link href={`/store/products/${item.id}`} className="text-lg font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300">
-                  {item.name}
+                <Link
+                  href={item.isBundle ? `/store/bundles/${item.id}` : `/store/products/${item.id}`}
+                  className="text-lg font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  {item.name} {item.isBundle && <span className="text-xs bg-green-100 text-green-700 dark:bg-green-700 dark:text-green-100 px-2 py-0.5 rounded-full ml-2">پک</span>}
                 </Link>
-                <p className="text-sm text-gray-500 dark:text-gray-400">{item.brand}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {item.isBundle ? `${item.bundleItems?.length || 0} محصول در این پک` : item.brand}
+                </p>
                 <p className="text-sm text-gray-700 dark:text-gray-200 mt-1">
                   {item.price.toLocaleString('fa-IR')} تومان
                 </p>
+                {item.isBundle && item.bundleItems && (
+                  <div className="mt-1">
+                    <ul className="list-disc list-inside pl-1">
+                      {item.bundleItems.slice(0, 2).map(pItem => ( // Show first 2 items for brevity
+                        <li key={pItem.productId} className="text-xs text-gray-500 dark:text-gray-400">
+                          {pItem.productName} (x{pItem.quantity})
+                        </li>
+                      ))}
+                      {item.bundleItems.length > 2 && <li className="text-xs text-gray-500 dark:text-gray-400">و موارد دیگر...</li>}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="flex items-center space-x-3 space-x-reverse">
-              <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md">
+              {/* Quantity controls for bundles might be disabled or limited if bundles are sold as single units */}
+              <div className={`flex items-center border border-gray-300 dark:border-gray-600 rounded-md ${item.isBundle ? 'opacity-70' : ''}`}>
                 <button
                   onClick={() => updateQuantity(item.id, item.quantityInCart - 1)}
-                  disabled={item.quantityInCart <= 1}
+                  disabled={item.quantityInCart <= 1 || item.isBundle} // Disable for bundles if they are single unit add
                   className="px-3 py-1.5 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-r-md transition-colors disabled:opacity-50"
                 >
                   -
@@ -64,20 +82,22 @@ const ShoppingCart = () => {
                   type="number"
                   value={item.quantityInCart}
                   onChange={(e) => {
+                    if (item.isBundle) return; // Prevent manual input for bundles for now
                     const newQuantity = parseInt(e.target.value, 10);
                     if (!isNaN(newQuantity) && newQuantity > 0) {
                       updateQuantity(item.id, newQuantity);
                     } else if (!isNaN(newQuantity) && newQuantity <= 0) {
-                      updateQuantity(item.id, 1); // Or perhaps remove if 0, but updateQuantity handles min 1
+                      updateQuantity(item.id, 1);
                     }
                   }}
                   min="1"
-                  max={item.stockQuantity} // Make sure stockQuantity is part of CartItem if you enforce this strictly here
+                  max={item.isBundle ? 1 : item.stockQuantity} // Example: Max 1 for bundle, product stock for others
+                  readOnly={item.isBundle} // Make readonly for bundles if quantity is fixed
                   className="w-12 text-center border-x border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-sm py-1.5"
                 />
                 <button
                   onClick={() => updateQuantity(item.id, item.quantityInCart + 1)}
-                  disabled={item.quantityInCart >= item.stockQuantity}
+                  disabled={item.isBundle || item.quantityInCart >= item.stockQuantity} // Disable for bundles or if max stock reached
                   className="px-3 py-1.5 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-l-md transition-colors disabled:opacity-50"
                 >
                   +

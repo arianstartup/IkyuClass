@@ -8,6 +8,9 @@ const teacherRoutes = require('./routes/teacherRoutes'); // Import teacher route
 const bookingRoutes = require('./routes/bookingRoutes'); // Import booking routes
 const paymentRoutes = require('./routes/paymentRoutes'); // Import payment routes
 const productRoutes = require('./routes/productRoutes'); // Import product routes
+const authRoutes = require('./routes/authRoutes'); // Import auth routes
+const productBundleRoutes = require('./routes/productBundleRoutes'); // Import product bundle routes
+const adminSettingsRoutes = require('./routes/adminSettingsRoutes'); // Import admin settings routes
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -37,6 +40,15 @@ app.use('/api/payments', paymentRoutes);
 
 // Product routes
 app.use('/api/products', productRoutes);
+
+// Auth routes
+app.use('/api/auth', authRoutes);
+
+// Product Bundle routes
+app.use('/api/product-bundles', productBundleRoutes);
+
+// Admin Settings routes
+app.use('/api/admin/settings', adminSettingsRoutes);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);

@@ -1,10 +1,14 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { ProductType } from '@/app/store/page'; // Assuming ProductType is defined here
+import { ProductType } from '@/app/store/page'; // Regular product type
+import { ProductInBundle } from '@/components/store/BundleCard'; // For items within a bundle
 
-export interface CartItem extends ProductType {
+// Updated CartItem to potentially include bundle-specific fields
+export interface CartItem extends ProductType { // ProductType might need to be more generic or a union type
   quantityInCart: number;
+  isBundle?: boolean;
+  bundleItems?: ProductInBundle[]; // Array of products if this cart item is a bundle
 }
 
 interface CartState {
@@ -34,17 +38,38 @@ const cartReducer = (state: CartState, action: CartAction): CartState => {
     case 'LOAD_CART':
       return { ...state, items: action.payload.items };
     case 'ADD_TO_CART': {
-      const { product, quantity } = action.payload;
+  const { product, quantity } = action.payload; // product here can be a regular product or a bundle pseudo-product
       const existingItemIndex = state.items.findIndex(item => item.id === product.id);
+
       if (existingItemIndex > -1) {
+    // Item exists, update quantity
+    const existingItem = state.items[existingItemIndex];
+    let newQuantity = existingItem.quantityInCart + quantity;
+
+    // For bundles, stockQuantity is often managed differently (e.g., 1 means 1 bundle package).
+    // For individual products, it's the actual stock.
+    // The `product.stockQuantity` passed to addToCart for a bundle should reflect how many *bundles* can be bought.
+    // If bundle stock is effectively 1 (can only add one of this specific bundle deal), then newQuantity should be capped at 1.
+    // For this example, let's assume `product.stockQuantity` for a bundle being added is its "buyable units as a bundle".
+    newQuantity = Math.min(newQuantity, product.stockQuantity);
+
         const updatedItems = state.items.map((item, index) =>
           index === existingItemIndex
-            ? { ...item, quantityInCart: Math.min(item.quantityInCart + quantity, product.stockQuantity) }
+        ? { ...item, quantityInCart: newQuantity }
             : item
         );
         return { ...state, items: updatedItems };
       } else {
-        return { ...state, items: [...state.items, { ...product, quantityInCart: Math.min(quantity, product.stockQuantity) }] };
+    // Item does not exist, add new
+    // Ensure quantity does not exceed stock for the first add.
+    const quantityToAdd = Math.min(quantity, product.stockQuantity);
+    return {
+        ...state,
+        items: [...state.items, {
+            ...product, // This includes all fields passed from addToCart (id, name, price, images, isBundle, bundleItems etc.)
+            quantityInCart: quantityToAdd
+        }]
+    };
       }
     }
     case 'REMOVE_FROM_CART': {
@@ -55,14 +80,18 @@ const cartReducer = (state: CartState, action: CartAction): CartState => {
     }
     case 'UPDATE_QUANTITY': {
       const { productId, quantity } = action.payload;
-      // Find product to check stockQuantity, assuming it's already in cart (so product data is there)
       const itemToUpdate = state.items.find(item => item.id === productId);
       if (!itemToUpdate) return state;
+
+  // For bundles, stockQuantity might be treated as "max bundles allowed in cart" e.g. 1 or 2.
+  // For individual products, it's the actual stock.
+  // This logic assumes itemToUpdate.stockQuantity correctly reflects this.
+  const newQuantity = Math.min(Math.max(quantity, 1), itemToUpdate.stockQuantity);
 
       return {
         ...state,
         items: state.items.map(item =>
-          item.id === productId ? { ...item, quantityInCart: Math.min(Math.max(quantity, 1), item.stockQuantity) } : item
+      item.id === productId ? { ...item, quantityInCart: newQuantity } : item
         ),
       };
     }
@@ -94,13 +123,18 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   // Save cart to localStorage whenever it changes
   useEffect(() => {
-    if (state.items.length > 0 || localStorage.getItem(CART_STORAGE_KEY)) { // Avoid writing empty array if it was never there
-        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.items));
+  // Only write to localStorage if there are items or if it previously had items (to clear it)
+  if (state.items.length > 0) {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.items));
+  } else if (localStorage.getItem(CART_STORAGE_KEY) !== null) { // If cart is now empty but was not
+    localStorage.removeItem(CART_STORAGE_KEY);
     }
   }, [state.items]);
 
-  const addToCart = (product: ProductType, quantity: number) => {
-    dispatch({ type: 'ADD_TO_CART', payload: { product, quantity } });
+// Update ProductType to be more flexible for what can be added (Product or Bundle-like structure)
+// The `product` argument can now represent a bundle with bundle-specific fields.
+const addToCart = (product: Partial<CartItem> & { id: string; name: string; price: number; stockQuantity: number }, quantity: number) => {
+  dispatch({ type: 'ADD_TO_CART', payload: { product: product as ProductType, quantity } }); // Cast for reducer, ensure all required fields are present
   };
 
   const removeFromCart = (productId: string) => {
