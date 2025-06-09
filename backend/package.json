@@ -1,0 +1,19 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "Backend for the project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "firebase-admin": "^12.1.0",
+    "zarinpal-checkout": "^0.3.2", // Example version, actual version may vary
+    "axios": "^1.6.8" // General purpose HTTP client
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
