@@ -20,13 +20,25 @@ const smsProviderSettingsSchema = z.object({
 
 // Zod schema for AI Service (Gemini)
 const aiServiceSettingsSchema = z.object({
-  geminiApiKey: z.string().min(20, "کلید API هوش مصنوعی (Gemini) معتبر نیست.").optional().or(z.literal('')), // Gemini keys are typically long
+  geminiApiKey: z.string().min(20, "کلید API هوش مصنوعی (Gemini) معتبر نیست.").optional().or(z.literal('')),
 });
+
+// Zod schema for Email SMTP settings
+const emailSmtpSettingsSchema = z.object({
+  emailSmtpHost: z.string().min(3, "آدرس هاست SMTP نامعتبر است.").optional().or(z.literal('')),
+  emailSmtpPort: z.coerce.number().int().positive("پورت SMTP باید عدد مثبت باشد.").optional().or(z.literal(null).or(z.literal(0))), // Allow empty or 0 for reset
+  emailSmtpSecure: z.boolean().default(false), // Default to false (for STARTTLS on port 587 typically)
+  emailSmtpUser: z.string().optional().or(z.literal('')),
+  emailSmtpPassword: z.string().optional().or(z.literal('')), // Not validating min length for password to allow clearing it
+  emailSenderAddress: z.string().email("آدرس ایمیل فرستنده نامعتبر است.").optional().or(z.literal('')),
+});
+
 
 // Combined schema for the page
 const integrationsSettingsSchema = zarinpalSettingsSchema
   .merge(smsProviderSettingsSchema)
-  .merge(aiServiceSettingsSchema);
+  .merge(aiServiceSettingsSchema)
+  .merge(emailSmtpSettingsSchema);
 
 type IntegrationsSettingsInputs = z.infer<typeof integrationsSettingsSchema>;
 
@@ -36,6 +48,12 @@ interface PlatformSettings {
     smsApiKey?: string;
     smsSenderNumber?: string;
     geminiApiKey?: string;
+    emailSmtpHost?: string;
+    emailSmtpPort?: number | null;
+    emailSmtpSecure?: boolean;
+    emailSmtpUser?: string;
+    emailSmtpPassword?: string;
+    emailSenderAddress?: string;
     // Add other settings fields as they are defined
 }
 
@@ -54,6 +72,12 @@ const IntegrationsSettingsPage = () => {
       smsApiKey: '',
       smsSenderNumber: '',
       geminiApiKey: '',
+      emailSmtpHost: '',
+      emailSmtpPort: 587, // Default common port
+      emailSmtpSecure: false,
+      emailSmtpUser: '',
+      emailSmtpPassword: '',
+      emailSenderAddress: '',
     }
   });
 
@@ -167,6 +191,50 @@ const IntegrationsSettingsPage = () => {
             {errors.geminiApiKey && <p className={errorClass}>{errors.geminiApiKey.message}</p>}
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">این کلید به صورت امن در سمت سرور ذخیره می‌شود.</p>
           </div>
+        </div>
+
+        {/* Email SMTP Settings Section */}
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+          <h2 className="text-xl font-medium text-gray-900 dark:text-white mb-1">تنظیمات ارسال ایمیل (SMTP)</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">این تنظیمات برای ارسال ایمیل‌های سیستمی مانند خوش‌آمدگویی استفاده می‌شود.</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="emailSmtpHost" className="block text-sm font-medium text-gray-700 dark:text-gray-200">هاست SMTP</label>
+              <input type="text" id="emailSmtpHost" {...register("emailSmtpHost")} className={inputClass} placeholder="مثال: smtp.gmail.com"/>
+              {errors.emailSmtpHost && <p className={errorClass}>{errors.emailSmtpHost.message}</p>}
+            </div>
+            <div>
+              <label htmlFor="emailSmtpPort" className="block text-sm font-medium text-gray-700 dark:text-gray-200">پورت SMTP</label>
+              <input type="number" id="emailSmtpPort" {...register("emailSmtpPort")} className={inputClass} placeholder="مثال: 587 یا 465"/>
+              {errors.emailSmtpPort && <p className={errorClass}>{errors.emailSmtpPort.message}</p>}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="emailSmtpUser" className="block text-sm font-medium text-gray-700 dark:text-gray-200">نام کاربری SMTP</label>
+            <input type="text" id="emailSmtpUser" {...register("emailSmtpUser")} className={inputClass} placeholder="ایمیل یا نام کاربری SMTP"/>
+            {errors.emailSmtpUser && <p className={errorClass}>{errors.emailSmtpUser.message}</p>}
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="emailSmtpPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-200">پسورد SMTP</label>
+            <input type="password" id="emailSmtpPassword" {...register("emailSmtpPassword")} className={inputClass} placeholder="پسورد حساب SMTP"/>
+            {errors.emailSmtpPassword && <p className={errorClass}>{errors.emailSmtpPassword.message}</p>}
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="emailSenderAddress" className="block text-sm font-medium text-gray-700 dark:text-gray-200">آدرس ایمیل فرستنده</label>
+            <input type="email" id="emailSenderAddress" {...register("emailSenderAddress")} className={inputClass} placeholder="مثال: noreply@yourdomain.com"/>
+            {errors.emailSenderAddress && <p className={errorClass}>{errors.emailSenderAddress.message}</p>}
+          </div>
+
+          <div className="mt-4 flex items-center">
+            <input id="emailSmtpSecure" type="checkbox" {...register("emailSmtpSecure")} className={checkboxClass} />
+            <label htmlFor="emailSmtpSecure" className="mr-2 block text-sm text-gray-900 dark:text-gray-300">استفاده از SSL/TLS (Secure)</label>
+            <p className="mr-4 text-xs text-gray-500 dark:text-gray-400">(معمولاً برای پورت 465 فعال و برای پورت 587 غیرفعال است)</p>
+          </div>
+          {errors.emailSmtpSecure && <p className={errorClass}>{errors.emailSmtpSecure.message}</p>}
         </div>
 
         {updateStatus && (

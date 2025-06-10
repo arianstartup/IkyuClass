@@ -12,7 +12,8 @@
     "firebase-admin": "^12.1.0",
     "zarinpal-checkout": "^0.3.2", // Example version, actual version may vary
     "axios": "^1.6.8", // General purpose HTTP client
-    "bcrypt": "^5.1.1" // For hashing OTPs
+    "bcrypt": "^5.1.1", // For hashing OTPs
+    "nodemailer": "^6.9.13" // For sending emails
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

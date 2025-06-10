@@ -1,7 +1,9 @@
 const { db } = require('../config/firebaseConfig');
 const { createTeacher } = require('../models/userTypes');
 const admin = require('firebase-admin'); // Ensure admin is imported
-const { setUserRoleClaim } = require('../utils/authUtils'); // Import the new utility
+const { setUserRoleClaim } = require('../utils/authUtils');
+const { sendEmail } = require('../utils/emailService'); // Import email service
+const { getWelcomeEmailTemplate } = require('../utils/emailTemplates'); // Import email template
 
 const registerTeacher = async (req, res) => {
   try {
@@ -82,6 +84,16 @@ const registerTeacherFinal = async (req, res) => {
     }
 
     console.log('Teacher final registration successful, user and teacher profiles created, role claim attempted:', uid);
+
+    // Send welcome email (fire and forget, don't let it block response)
+    try {
+      const { subject, html, text } = getWelcomeEmailTemplate(`${firstName} ${lastName}`, 'teacher');
+      await sendEmail({ to: email, subject, html, text });
+      console.log(`Welcome email sent to new teacher ${email}`);
+    } catch (emailError) {
+      console.error(`Failed to send welcome email to ${email}:`, emailError);
+    }
+
     res.status(201).json({ message: 'ثبت نام معلم با موفقیت انجام شد و حساب کاربری ایجاد گردید!', userId: uid });
   } catch (error) {
     console.error('Error in final teacher registration:', error);
