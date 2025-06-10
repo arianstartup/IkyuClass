@@ -136,4 +136,38 @@ const verifyOtpCode = async (req, res) => {
 module.exports = {
   sendVerificationCode,
   verifyOtpCode,
+  logoutUser, // Add new function
+};
+
+// Logout User (Revoke Refresh Tokens)
+const logoutUser = async (req, res) => {
+  try {
+    const uid = req.user.uid; // UID from verifyFirebaseToken middleware
+
+    if (!uid) {
+      // This case should ideally be caught by verifyFirebaseToken middleware itself
+      return res.status(400).json({ message: "User UID not found in request. Cannot logout." });
+    }
+
+    await admin.auth().revokeRefreshTokens(uid);
+
+    // Optional: You might want to update the user's document in Firestore to note the logout time,
+    // or manage a session status if you have one. For Firebase Auth, revoking refresh tokens
+    // is the primary server-side action for "logging out" in terms of long-term access.
+    // ID tokens will eventually expire (usually after 1 hour).
+
+    // const user = await admin.auth().getUser(uid);
+    // console.log(`User refresh tokens revoked for ${uid}. Valid since: ${new Date(user.tokensValidAfterTime).toISOString()}`);
+
+    console.log(`User ${uid} logged out successfully. Refresh tokens revoked.`);
+    res.status(200).json({ message: "User logged out successfully. Refresh tokens have been revoked." });
+
+  } catch (error) {
+    console.error(`Error logging out user ${req.user?.uid}:`, error);
+    // Check for specific error codes if needed
+    if (error.code === 'auth/user-not-found') {
+        return res.status(404).json({ message: "User not found, cannot revoke tokens." });
+    }
+    res.status(500).json({ message: "Error logging out user.", error: error.message });
+  }
 };

@@ -12,19 +12,18 @@ const CALLBACK_BASE_URL = process.env.CALLBACK_BASE_URL || 'http://localhost:300
 
 // Initiate payment for a booking
 const initiateBookingPayment = async (req, res) => {
-  const currentZarinpalConfig = getZarinpalConfig(); // Get current config
-  // It's better to initialize SDK here if it depends on fetched config,
-  // or ensure the global `zarinpal` instance is re-initialized if config changes.
-  // For simplicity, assuming zarinpal-checkout SDK can be re-instantiated or its properties set.
+  const currentZarinpalConfig = getZarinpalConfig();
   const zarinpal = ZarinpalCheckout.create(currentZarinpalConfig.merchantID, currentZarinpalConfig.sandbox);
 
   try {
     const { bookingId } = req.params;
-    const { studentId } = req.body; // In a real app, studentId should come from req.user (authenticated user)
+    const { uid: studentId, role } = req.user; // Get studentId from authenticated user
 
-    if (!studentId) {
-      return res.status(400).json({ message: "Student ID is required." });
-    }
+    // studentId is now from req.user.uid
+    // Optional: Check if role is appropriate (e.g. student or admin)
+    // if (role !== 'student' && role !== 'admin') {
+    //   return res.status(403).json({ message: "User role not authorized to initiate this payment." });
+    // }
 
     const bookingRef = db.collection('bookings').doc(bookingId);
     const bookingDoc = await bookingRef.get();
@@ -113,9 +112,13 @@ const verifyZarinpalPayment = async (req, res) => {
   try {
     if (type === 'store_order') {
       orderCollectionName = 'storeOrders';
-      successRedirectPath = `/store/checkout/success`; // Specific success page for store orders
+      successRedirectPath = `/store/checkout/success`;
       failureRedirectPath = `/store/checkout/failed`;
-    } else { // Default to 'booking' or if type is not specified
+    } else if (type === 'research_order') {
+      orderCollectionName = 'researchOrders';
+      successRedirectPath = `/research-orders/payment/success`; // New success page for research orders
+      failureRedirectPath = `/research-orders/payment/failed`; // New failure page for research orders
+    } else { // Default to 'booking'
       orderCollectionName = 'bookings';
       successRedirectPath = `/bookings/payment/success`;
       failureRedirectPath = `/bookings/payment/failed`;
@@ -148,24 +151,34 @@ const verifyZarinpalPayment = async (req, res) => {
       return res.redirect(`${FRONTEND_URL}${failureRedirectPath}&error=OrderAlreadyProcessed&currentStatus=${orderData.status}`);
     }
 
-    const amount = (type === 'store_order' ? orderData.finalAmount : orderData.price).toString();
+    const amount = (type === 'store_order' ? orderData.finalAmount : (type === 'research_order' ? orderData.finalPrice : orderData.price)).toString();
 
     if (Status === 'OK') {
       console.log(`Payment for ${type || 'booking'} ${localOrderId} (Authority: ${Authority}) reported OK. Verifying...`);
       const verificationResponse = await zarinpal.PaymentVerification({ Amount: amount, Authority: Authority });
 
-      if (verificationResponse.status === 100 || verificationResponse.status === 101) {
+      if (verificationResponse.status === 100 || verificationResponse.status === 101) { // 101 means already verified but OK
         console.log(`Payment verification successful for ${localOrderId}. RefID: ${verificationResponse.RefID}`);
 
-        const updatePayload = {
-          status: type === 'store_order' ? 'paid' : 'confirmed',
-          paymentRefId: verificationResponse.RefID.toString(),
-          'paymentDetails.transactionId': verificationResponse.RefID.toString(), // For store orders
+        let updatePayload = { // Common fields
+          paymentRefId: verificationResponse.RefID.toString(), // Used for bookings
+          'paymentDetails.refId': verificationResponse.RefID.toString(), // Standardized for all
+          'paymentDetails.transactionId': verificationResponse.RefID.toString(),
           'paymentDetails.paymentDate': admin.firestore.FieldValue.serverTimestamp(),
           'paymentDetails.paymentStatus': 'completed',
-          paymentTimestamp: admin.firestore.FieldValue.serverTimestamp(), // For bookings
+          'paymentDetails.method': 'Zarinpal', // Store payment method
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
+
+        if (type === 'store_order') {
+          updatePayload.status = 'paid'; // Overall order status
+        } else if (type === 'research_order') {
+          updatePayload.paymentStatus = 'paid'; // Specific payment status for research order
+        } else { // Booking
+          updatePayload.status = 'confirmed'; // Overall booking status
+          updatePayload.paymentTimestamp = admin.firestore.FieldValue.serverTimestamp(); // Legacy for bookings
+        }
+
         await orderDocRef.update(updatePayload);
 
         // Deduct stock for store orders
@@ -175,7 +188,6 @@ const verifyZarinpalPayment = async (req, res) => {
             if (item.isBundle && item.bundleItems) { // It's a bundle
                 for (const bundledProduct of item.bundleItems) {
                     const productRef = db.collection('products').doc(bundledProduct.productId);
-                    // Quantity to deduct is product's quantity in bundle * number of bundles bought
                     const quantityToDeduct = bundledProduct.quantity * item.quantity;
                     batch.update(productRef, {
                         stockQuantity: admin.firestore.FieldValue.increment(-quantityToDeduct)
@@ -192,26 +204,36 @@ const verifyZarinpalPayment = async (req, res) => {
           console.log(`Stock deducted for store order ${localOrderId}.`);
         }
         return res.redirect(`${FRONTEND_URL}${successRedirectPath}&refId=${verificationResponse.RefID}`);
-      } else {
+      } else { // Zarinpal verification failed
         console.error(`Zarinpal PaymentVerification failed for ${localOrderId}:`, verificationResponse);
-        await orderDocRef.update({
-          status: 'payment_failed',
+        const errorUpdatePayload = {
           paymentError: `Verification failed with status: ${verificationResponse.status}`,
           'paymentDetails.paymentStatus': 'failed',
           'paymentDetails.errorCode': verificationResponse.status,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        };
+        if (type === 'store_order' || type === 'research_order') { // For orders, update paymentStatus
+            errorUpdatePayload.paymentStatus = 'failed';
+        } else { // For bookings, update overall status
+            errorUpdatePayload.status = 'payment_failed';
+        }
+        await orderDocRef.update(errorUpdatePayload);
         return res.redirect(`${FRONTEND_URL}${failureRedirectPath}&error=VerificationFailed&status=${verificationResponse.status}`);
       }
-    } else { // Status !== 'OK'
+    } else { // Status !== 'OK' (e.g., user cancelled at Zarinpal)
       console.log(`Payment cancelled or failed by user for ${localOrderId}. Status: ${Status}`);
-      await orderDocRef.update({
-        status: 'payment_failed',
+      const cancelUpdatePayload = {
         paymentError: `Payment cancelled or failed before verification. Status: ${Status}`,
         'paymentDetails.paymentStatus': 'cancelled_or_failed',
         'paymentDetails.errorCode': Status,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      };
+       if (type === 'store_order' || type === 'research_order') {
+            cancelUpdatePayload.paymentStatus = 'failed'; // Or 'cancelled'
+        } else {
+            cancelUpdatePayload.status = 'payment_failed'; // Or 'cancelled'
+        }
+      await orderDocRef.update(cancelUpdatePayload);
       return res.redirect(`${FRONTEND_URL}${failureRedirectPath}&error=PaymentCancelled&status=${Status}`);
     }
   } catch (error) {
@@ -225,18 +247,17 @@ const verifyZarinpalPayment = async (req, res) => {
 module.exports = {
   initiateBookingPayment,
   verifyZarinpalPayment,
-  initiateStoreOrderPayment, // Add new function
+  initiateStoreOrderPayment,
+  initiateResearchOrderPayment, // Add new function
 };
 
 // Initiate payment for a store order
 const initiateStoreOrderPayment = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { userId } = req.body; // In a real app, userId should come from req.user
+    const { uid: userId } = req.user; // Get userId from authenticated user
 
-    if (!userId) {
-      return res.status(400).json({ message: "User ID is required." });
-    }
+    // userId is now from req.user.uid
 
     const currentZarinpalConfig = getZarinpalConfig();
     const zarinpal = ZarinpalCheckout.create(currentZarinpalConfig.merchantID, currentZarinpalConfig.sandbox);
@@ -297,5 +318,78 @@ const initiateStoreOrderPayment = async (req, res) => {
   } catch (error) {
     console.error('Error initiating store order payment:', error);
     res.status(500).json({ message: 'Error initiating store order payment.', error: error.message });
+  }
+};
+
+// Initiate payment for a research order
+const initiateResearchOrderPayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { uid: userId } = req.user; // Get userId from authenticated user
+
+    // userId is now from req.user.uid
+
+    const orderRef = db.collection('researchOrders').doc(orderId);
+    const orderDoc = await orderRef.get();
+
+    if (!orderDoc.exists) {
+      return res.status(404).json({ message: "Research order not found." });
+    }
+
+    const orderData = orderDoc.data();
+
+    if (orderData.userId !== userId) {
+      return res.status(403).json({ message: "You are not authorized to pay for this research order." });
+    }
+    if (orderData.contentGenerationStatus !== 'completed') {
+      return res.status(400).json({ message: `Content for this research order is not yet ready. Current status: ${orderData.contentGenerationStatus}` });
+    }
+    if (orderData.paymentStatus === 'paid') {
+        return res.status(400).json({ message: "This research order has already been paid." });
+    }
+    if (orderData.paymentStatus !== 'pending') {
+      return res.status(400).json({ message: `Research order is not pending payment. Current payment status: ${orderData.paymentStatus}` });
+    }
+    if (!orderData.finalPrice || orderData.finalPrice <= 0) {
+        return res.status(400).json({ message: "Research order amount (finalPrice) is not valid." });
+    }
+
+    const currentZarinpalConfig = getZarinpalConfig();
+    const zarinpal = ZarinpalCheckout.create(currentZarinpalConfig.merchantID, currentZarinpalConfig.sandbox);
+
+    const amount = orderData.finalPrice.toString();
+    const description = `پرداخت هزینه تحقیق - شناسه سفارش: ${orderId}`;
+    const callbackURL = `${CALLBACK_BASE_URL}/api/payments/zarinpal/verify?type=research_order&orderId=${orderId}`;
+
+    console.log(`Attempting payment for research order ${orderId} with amount ${amount}`);
+
+    const paymentResponse = await zarinpal.PaymentRequest({
+      Amount: amount,
+      Description: description,
+      CallbackURL: callbackURL,
+    });
+
+    if (paymentResponse.status === 100 && paymentResponse.authority) {
+      await orderRef.update({
+        'paymentDetails.authority': paymentResponse.authority,
+        'paymentDetails.paymentGateway': 'Zarinpal',
+        'paymentDetails.paymentAttemptedAt': admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      const paymentGatewayURL = zarinpal.GateIsEnabled
+        ? `https://www.zarinpal.com/pg/StartPay/${paymentResponse.authority}`
+        : `https://sandbox.zarinpal.com/pg/StartPay/${paymentResponse.authority}`;
+
+      console.log(`Payment request successful for research order ${orderId}. Authority: ${paymentResponse.authority}. URL: ${paymentGatewayURL}`);
+      res.status(200).json({ paymentGatewayURL });
+    } else {
+      console.error("Zarinpal PaymentRequest failed for research order:", paymentResponse);
+      throw new Error(`خطا در ایجاد تراکنش زرین پال برای سفارش تحقیق: ${paymentResponse.status || 'Unknown Error'}`);
+    }
+
+  } catch (error) {
+    console.error('Error initiating research order payment:', error);
+    res.status(500).json({ message: 'Error initiating research order payment.', error: error.message });
   }
 };

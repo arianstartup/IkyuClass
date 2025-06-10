@@ -22,6 +22,15 @@ function createUniversityStudent(uid, email, firstName, lastName, universityName
 
 // Structure for a teacher
 function createTeacher(uid, email, firstName, lastName, subjectTaught, qualifications, availability = [], additionalDetails = {}) {
+  const defaultTeacherDetails = {
+    averageRating: 0,
+    totalRatings: 0,
+    hourlyRate: 0, // Example default for other financial/profile details
+    bio: '',
+    // ... other details specific to a teacher profile
+    ...additionalDetails // This allows overriding defaults if provided
+  };
+
   return {
     uid,
     email,
@@ -31,9 +40,10 @@ function createTeacher(uid, email, firstName, lastName, subjectTaught, qualifica
     subjectTaught, // e.g., ['Math', 'Physics']
     qualifications, // e.g., 'MSc in Physics'
     availability, // Array of availability slots e.g., [{ dayOfWeek: 'شنبه', startTime: '09:00', endTime: '17:00', type: 'online' }]
+    // Merging additionalDetails with defaults. Provided additionalDetails will override defaults.
+    ...defaultTeacherDetails,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    ...additionalDetails, // e.g., yearsOfExperience, officeHours, hourlyRate
   };
 }
 

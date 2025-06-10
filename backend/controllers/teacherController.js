@@ -84,7 +84,16 @@ const getTeacherById = async (req, res) => {
       return res.status(404).json({ message: 'Teacher not found.' });
     }
 
-    res.status(200).json({ id: teacherDoc.id, ...teacherDoc.data() });
+    const teacherData = teacherDoc.data();
+    // Ensure default values are returned if these fields are somehow missing, though model sets them.
+    const responseData = {
+        id: teacherDoc.id,
+        ...teacherData,
+        averageRating: teacherData.averageRating || 0,
+        totalRatings: teacherData.totalRatings || 0,
+    };
+
+    res.status(200).json(responseData);
   } catch (error) {
     console.error('Error fetching teacher by ID:', error);
     res.status(500).json({ message: 'Error fetching teacher profile.', error: error.message });

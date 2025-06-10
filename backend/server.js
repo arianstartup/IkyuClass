@@ -11,6 +11,8 @@ const productRoutes = require('./routes/productRoutes'); // Import product route
 const authRoutes = require('./routes/authRoutes'); // Import auth routes
 const productBundleRoutes = require('./routes/productBundleRoutes'); // Import product bundle routes
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes'); // Import admin settings routes
+const adminRoutes = require('./routes/adminRoutes'); // Import general admin routes
+const reviewRoutes = require('./routes/reviewRoutes'); // Import review routes
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -49,6 +51,12 @@ app.use('/api/product-bundles', productBundleRoutes);
 
 // Admin Settings routes
 app.use('/api/admin/settings', adminSettingsRoutes);
+
+// General Admin routes (for actions like order management, etc.)
+app.use('/api/admin', adminRoutes); // This will prefix routes in adminRoutes.js with /api/admin
+
+// Review routes
+app.use('/api/reviews', reviewRoutes);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);

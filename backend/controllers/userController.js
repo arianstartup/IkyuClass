@@ -1,134 +1,147 @@
 const { db } = require('../config/firebaseConfig');
 const { createTeacher } = require('../models/userTypes');
+const admin = require('firebase-admin'); // Ensure admin is imported
+const { setUserRoleClaim } = require('../utils/authUtils'); // Import the new utility
 
 const registerTeacher = async (req, res) => {
   try {
     const { email, firstName, lastName, subjectTaught, qualifications, password } = req.body;
-
-    // Basic validation
     if (!email || !firstName || !lastName || !subjectTaught || !qualifications || !password) {
       return res.status(400).json({ message: 'Missing required fields for teacher registration.' });
     }
-
-    // In a real app, 'password' would be handled by Firebase Auth, not stored directly.
-    // For now, we are just creating a Firestore document.
-    // We'll use the email as a temporary UID placeholder or let Firestore auto-generate an ID.
-
-    // Create a new teacher object (without UID for now, Firestore will generate one)
-    // Or, if you want to use email as a document ID (ensure it's unique and valid for Firestore paths):
-    // const teacherId = email.replace(/[^a-zA-Z0-9]/g, "_"); // Basic sanitization for ID
-
     const newTeacherData = createTeacher(
-      null, // UID will be the Firestore document ID or set later via Auth
-      email,
-      firstName,
-      lastName,
-      subjectTaught,
-      qualifications,
-      [], // Empty availability array initially
-      { initialPasswordPlaceholder: password } // Storing password here is NOT secure for production
+      null, email, firstName, lastName, subjectTaught, qualifications, [],
+      { initialPasswordPlaceholder: password }
     );
-
-    // Add a new document with an auto-generated ID
     const teacherRef = await db.collection('teachers').add(newTeacherData);
-
-    // Update the teacher data with the generated ID as uid
     await teacherRef.update({ uid: teacherRef.id });
     const teacherDoc = await teacherRef.get();
-
     console.log('Teacher registered successfully (legacy endpoint):', teacherRef.id);
     res.status(201).json({
       message: 'Teacher registered successfully! (Legacy Endpoint)',
-      teacherId: teacherRef.id,
-      data: teacherDoc.data()
+      teacherId: teacherRef.id, data: teacherDoc.data()
     });
-
   } catch (error) {
     console.error('Error registering teacher (legacy endpoint):', error);
     res.status(500).json({ message: 'Error registering teacher (legacy endpoint).', error: error.message });
   }
 };
 
-
 const registerTeacherFinal = async (req, res) => {
   try {
-    const { email, firstName, lastName, subjectTaught, qualifications, password, phoneNumber /*, temporaryAuthToken */ } = req.body;
-
-    // Basic validation for core fields (similar to legacy, but phoneNumber is key)
+    const { email, firstName, lastName, subjectTaught, qualifications, password, phoneNumber } = req.body;
     if (!email || !firstName || !lastName || !subjectTaught || !qualifications || !password || !phoneNumber) {
       return res.status(400).json({ message: 'Missing required fields for final teacher registration.' });
     }
 
-    // **Verification Check**
-    // Option 1: Check temporaryAuthToken (if implemented and passed from frontend)
-    // For now, we'll use Option 2: Check Firestore 'verificationCodes' collection.
     const verificationCodeRef = db.collection('verificationCodes').doc(phoneNumber);
     const verificationDoc = await verificationCodeRef.get();
-
-    if (!verificationDoc.exists) {
-        return res.status(400).json({ message: 'Phone number verification record not found. Please verify your phone number first.' });
-    }
-    const verificationData = verificationDoc.data();
-    if (!verificationData.verified) {
-        return res.status(400).json({ message: 'Phone number not verified. Please complete OTP verification.' });
-    }
-    // Consider checking verificationData.expiresAt as well, or if the token itself has an expiry.
-    // For simplicity, if 'verified' is true, we proceed.
-
-    // TODO: Optional: consume the temporaryAuthToken or mark verificationCode as used for this registration.
-    // For example, you might want to delete the verificationDoc or set a flag like `registrationCompleted: true`
-    // to prevent re-use of the same OTP verification for multiple registrations.
-    // await verificationCodeRef.update({ registrationAttemptedAt: admin.firestore.FieldValue.serverTimestamp() });
-
-
-    // Check if a teacher with this email or phone number already exists
-    const emailCheck = await db.collection('teachers').where('email', '==', email).limit(1).get();
-    if (!emailCheck.empty) {
-        return res.status(409).json({ message: 'A teacher with this email already exists.' });
-    }
-    const phoneCheck = await db.collection('teachers').where('phoneNumber', '==', phoneNumber).limit(1).get();
-    if (!phoneCheck.empty) {
-        return res.status(409).json({ message: 'A teacher with this phone number already exists.' });
+    if (!verificationDoc.exists || !verificationDoc.data().verified) {
+      return res.status(400).json({ message: 'Phone number not verified or verification record not found.' });
     }
 
+    let firebaseUser;
+    try {
+      firebaseUser = await admin.auth().createUser({
+        phoneNumber: phoneNumber, password: password, displayName: `${firstName} ${lastName}`,
+        email: email, emailVerified: false,
+      });
+      console.log('Successfully created new user in Firebase Auth:', firebaseUser.uid);
+    } catch (authError) {
+      console.error('Error creating user in Firebase Auth:', authError);
+      if (authError.code === 'auth/email-already-exists') return res.status(409).json({ message: 'این ایمیل قبلاً ثبت نام شده است.' });
+      if (authError.code === 'auth/phone-number-already-exists') return res.status(409).json({ message: 'این شماره تلفن قبلاً ثبت نام شده است.' });
+      return res.status(500).json({ message: 'خطا در ایجاد کاربر در سیستم احراز هویت.', error: authError.message });
+    }
 
-    const newTeacherData = createTeacher(
-      null, // Firestore will generate ID
-      email,
-      firstName,
-      lastName,
-      subjectTaught,
-      qualifications,
-      [], // Default empty availability
-      {
-        initialPasswordPlaceholder: password, // NOT secure for production
-        phoneNumber: phoneNumber, // Store verified phone number
-        phoneNumberVerified: true
-      }
-    );
+    const uid = firebaseUser.uid;
+    const userRef = db.collection('users').doc(uid);
+    const commonUserData = {
+      uid, firstName, lastName, email, phoneNumber, phoneNumberVerified: true, role: 'teacher',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(), isActive: true,
+    };
+    await userRef.set(commonUserData);
 
-    const teacherRef = await db.collection('teachers').add(newTeacherData);
-    await teacherRef.update({ uid: teacherRef.id }); // Add Firestore generated ID as uid
-    const teacherDoc = await teacherRef.get();
+    const teacherSpecificData = createTeacher(uid, email, firstName, lastName, subjectTaught, qualifications, []);
+    delete teacherSpecificData.uid; delete teacherSpecificData.email; delete teacherSpecificData.firstName;
+    delete teacherSpecificData.lastName; delete teacherSpecificData.role; delete teacherSpecificData.createdAt;
+    delete teacherSpecificData.updatedAt;
 
-    // Optionally, delete or invalidate the OTP record after successful registration
-    // await verificationCodeRef.delete(); // Or update a status field
-
-    console.log('Teacher final registration successful:', teacherRef.id);
-    res.status(201).json({
-      message: 'Teacher registration successful with phone verification!',
-      teacherId: teacherRef.id,
-      data: teacherDoc.data()
+    const teacherRef = db.collection('teachers').doc(uid);
+    await teacherRef.set({
+        ...teacherSpecificData, uid: uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    await verificationCodeRef.delete();
+
+    try {
+      await setUserRoleClaim(uid, 'teacher');
+    } catch (claimError) {
+      console.error(`Failed to set custom role claim for teacher ${uid}:`, claimError.message);
+    }
+
+    console.log('Teacher final registration successful, user and teacher profiles created, role claim attempted:', uid);
+    res.status(201).json({ message: 'ثبت نام معلم با موفقیت انجام شد و حساب کاربری ایجاد گردید!', userId: uid });
   } catch (error) {
     console.error('Error in final teacher registration:', error);
-    res.status(500).json({ message: 'Error in final teacher registration.', error: error.message });
+    res.status(500).json({ message: 'خطا در تکمیل نهایی ثبت نام معلم.', error: error.message });
   }
 };
 
+const registerStudentFinal = async (req, res) => {
+  try {
+    const { email, firstName, lastName, password, phoneNumber } = req.body;
+    if (!email || !firstName || !lastName || !password || !phoneNumber) {
+      return res.status(400).json({ message: 'Missing required fields for student registration (email, name, password, phone).' });
+    }
+
+    const verificationCodeRef = db.collection('verificationCodes').doc(phoneNumber);
+    const verificationDoc = await verificationCodeRef.get();
+    if (!verificationDoc.exists || !verificationDoc.data().verified) {
+      return res.status(400).json({ message: 'Phone number not verified or verification record not found.' });
+    }
+
+    let firebaseUser;
+    try {
+      firebaseUser = await admin.auth().createUser({
+        phoneNumber: phoneNumber, password: password, displayName: `${firstName} ${lastName}`,
+        email: email, emailVerified: false,
+      });
+      console.log('Successfully created new student user in Firebase Auth:', firebaseUser.uid);
+    } catch (authError) {
+      console.error('Error creating student user in Firebase Auth:', authError);
+      if (authError.code === 'auth/email-already-exists') return res.status(409).json({ message: 'این ایمیل قبلاً ثبت نام شده است.' });
+      if (authError.code === 'auth/phone-number-already-exists') return res.status(409).json({ message: 'این شماره تلفن قبلاً ثبت نام شده است.' });
+      return res.status(500).json({ message: 'خطا در ایجاد کاربر دانش‌آموز در سیستم احراز هویت.', error: authError.message });
+    }
+
+    const uid = firebaseUser.uid;
+    const userRef = db.collection('users').doc(uid);
+    const studentUserData = {
+      uid, firstName, lastName, email, phoneNumber, phoneNumberVerified: true, role: 'student',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(), isActive: true,
+    };
+    await userRef.set(studentUserData);
+
+    await verificationCodeRef.delete();
+
+    try {
+      await setUserRoleClaim(uid, 'student');
+    } catch (claimError) {
+      console.error(`Failed to set custom role claim for student ${uid}:`, claimError.message);
+    }
+
+    console.log('Student final registration successful, user profile created, role claim attempted:', uid);
+    res.status(201).json({ message: 'ثبت نام دانش‌آموز با موفقیت انجام شد و حساب کاربری ایجاد گردید!', userId: uid });
+  } catch (error) {
+    console.error('Error in final student registration:', error);
+    res.status(500).json({ message: 'خطا در تکمیل نهایی ثبت نام دانش‌آموز.', error: error.message });
+  }
+};
 
 module.exports = {
-  registerTeacher, // Keep legacy for now, or deprecate
+  registerTeacher,
   registerTeacherFinal,
+  registerStudentFinal,
 };

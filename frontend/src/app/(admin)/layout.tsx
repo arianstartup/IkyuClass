@@ -1,18 +1,19 @@
-// This is a server component by default in App Router
-import React from 'react';
-import AdminLayoutClient from '@/components/admin/layout/AdminLayout'; // The client component we just created
+"use client"; // Route group layouts using HOCs for auth need to be client components
 
-export default function AdminPanelLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  // If you need to fetch data here for the layout (e.g. logged-in admin user),
-  // this would be the place for a Server Component.
-  // For now, AdminLayoutClient handles its own client-side state (like sidebar toggle).
+import React from 'react';
+import AdminLayoutClient from '@/components/admin/layout/AdminLayout';
+import withAuth from '@/components/auth/withAuth'; // Import the HOC
+
+const AdminPanelLayoutContent = ({ children }: { children: React.ReactNode }) => {
+  // This component now receives children and is wrapped by AdminLayoutClient
   return (
     <AdminLayoutClient>
       {children}
     </AdminLayoutClient>
   );
-}
+};
+
+// Wrap the content component with withAuth, specifying allowed roles
+const ProtectedAdminLayout = withAuth(AdminPanelLayoutContent, ['admin']);
+
+export default ProtectedAdminLayout;

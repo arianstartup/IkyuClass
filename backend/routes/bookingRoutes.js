@@ -1,16 +1,41 @@
 const express = require('express');
 const router = express.Router();
 const bookingController = require('../controllers/bookingController');
+const { verifyFirebaseToken, checkRole } = require('../middleware/authMiddleware');
 
-// In a real app, this route would be protected,
-// ensuring only authenticated students can create bookings.
+// POST /api/bookings/create - Create a new booking (Student/Admin action)
+// Student creates for themselves. Admin might create for a user.
+router.post(
+  '/create',
+  verifyFirebaseToken,
+  checkRole(['student', 'university_student', 'admin']),
+  bookingController.createNewBooking
+);
 
-// POST /api/bookings/create - Create a new booking
-router.post('/create', bookingController.createNewBooking);
+// GET /api/bookings/my-student-bookings - Get bookings for the logged-in student
+// Student sees their own. Admin could see if they pass studentId (controller logic to adapt).
+router.get(
+  '/my-student-bookings',
+  verifyFirebaseToken,
+  // checkRole(['student', 'university_student', 'admin']), // Controller will use req.user.uid for student
+  bookingController.getMyStudentBookings // Controller needs to be updated to use req.user.uid if no query param
+);
 
-// Add other booking-related routes here later
-// e.g., GET /api/bookings/:studentId - Get student's bookings
-// e.g., GET /api/bookings/:teacherId - Get teacher's bookings
-// e.g., PUT /api/bookings/:bookingId/cancel - Cancel a booking
+// GET /api/bookings/my-teacher-bookings - Get bookings for the logged-in teacher
+// Teacher sees their own. Admin could see if they pass teacherId.
+router.get(
+  '/my-teacher-bookings',
+  verifyFirebaseToken,
+  // checkRole(['teacher', 'admin']), // Controller will use req.user.uid for teacher
+  bookingController.getMyTeacherBookings // Controller needs to be updated
+);
+
+// PUT /api/bookings/:bookingId/cancel - Cancel a booking
+// User must be authenticated. Role check (student, teacher, or admin) happens inside controller.
+router.put(
+  '/:bookingId/cancel',
+  verifyFirebaseToken,
+  bookingController.cancelBooking
+);
 
 module.exports = router;

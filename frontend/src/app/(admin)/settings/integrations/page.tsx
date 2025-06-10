@@ -14,12 +14,20 @@ const zarinpalSettingsSchema = z.object({
 
 // Zod schema for SMS provider settings
 const smsProviderSettingsSchema = z.object({
-  smsApiKey: z.string().min(10, "کلید API پیامک معتبر نیست."),
-  smsSenderNumber: z.string().min(5, "شماره فرستنده پیامک معتبر نیست."), // e.g., +1... or 3000...
+  smsApiKey: z.string().min(10, "کلید API پیامک معتبر نیست.").optional().or(z.literal('')),
+  smsSenderNumber: z.string().min(5, "شماره فرستنده پیامک معتبر نیست.").optional().or(z.literal('')),
 });
 
-// Combined schema for the page (optional, can handle separate forms)
-const integrationsSettingsSchema = zarinpalSettingsSchema.merge(smsProviderSettingsSchema);
+// Zod schema for AI Service (Gemini)
+const aiServiceSettingsSchema = z.object({
+  geminiApiKey: z.string().min(20, "کلید API هوش مصنوعی (Gemini) معتبر نیست.").optional().or(z.literal('')), // Gemini keys are typically long
+});
+
+// Combined schema for the page
+const integrationsSettingsSchema = zarinpalSettingsSchema
+  .merge(smsProviderSettingsSchema)
+  .merge(aiServiceSettingsSchema);
+
 type IntegrationsSettingsInputs = z.infer<typeof integrationsSettingsSchema>;
 
 interface PlatformSettings {
@@ -27,6 +35,7 @@ interface PlatformSettings {
     isZarinpalSandbox?: boolean;
     smsApiKey?: string;
     smsSenderNumber?: string;
+    geminiApiKey?: string;
     // Add other settings fields as they are defined
 }
 
@@ -44,6 +53,7 @@ const IntegrationsSettingsPage = () => {
       zarinpalMerchantId: '',
       smsApiKey: '',
       smsSenderNumber: '',
+      geminiApiKey: '',
     }
   });
 
@@ -143,6 +153,19 @@ const IntegrationsSettingsPage = () => {
             <label htmlFor="smsSenderNumber" className="block text-sm font-medium text-gray-700 dark:text-gray-200">شماره فرستنده پیامک</label>
             <input type="text" id="smsSenderNumber" {...register("smsSenderNumber")} className={inputClass} placeholder="مثال: 3000123456 یا +981000123"/>
             {errors.smsSenderNumber && <p className={errorClass}>{errors.smsSenderNumber.message}</p>}
+          </div>
+        </div>
+
+        {/* AI Service (Gemini) Settings Section */}
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+          <h2 className="text-xl font-medium text-gray-900 dark:text-white mb-1">تنظیمات سرویس هوش مصنوعی (Gemini)</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">این کلید API برای تولید محتوای تحقیقات استفاده خواهد شد.</p>
+
+          <div>
+            <label htmlFor="geminiApiKey" className="block text-sm font-medium text-gray-700 dark:text-gray-200">Gemini API Key</label>
+            <input type="password" id="geminiApiKey" {...register("geminiApiKey")} className={inputClass} placeholder="کلید API دریافت شده از Google AI Studio"/>
+            {errors.geminiApiKey && <p className={errorClass}>{errors.geminiApiKey.message}</p>}
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">این کلید به صورت امن در سمت سرور ذخیره می‌شود.</p>
           </div>
         </div>
 

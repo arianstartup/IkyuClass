@@ -6,16 +6,35 @@ function createResearchOrder(userId, educationLevel, subject, description, deadl
   }
 
   return {
-    userId, // ID of the user who placed the order
-    educationLevel, // e.g., "دبیرستان", "کارشناسی", "کارشناسی ارشد"
-    subject, // e.g., "فیزیک کوانتوم", "ادبیات معاصر"
-    description, // Detailed description from the user
-    deadline, // ISO string or Firestore Timestamp
-    status: 'pending_payment', // Initial status
-    price, // Can be null initially, determined later
-    fileUploads: [], // Array to store paths or URLs of uploaded files by user
-    assignedTeacherId: null, // ID of the teacher assigned to this order
-    deliverables: [], // Array to store paths or URLs of delivered files by teacher
+    userId,
+    educationLevel,
+    subject,
+    description,
+    deadline,
+    price, // Initial price, might be an estimate or base price
+    finalPrice: price, // Final price, can be same as initial or adjusted later by admin
+    status: 'pending_payment', // Overall order status (e.g. related to teacher assignment if applicable)
+
+    // Payment specific fields
+    paymentStatus: 'pending', // 'pending', 'paid', 'failed', 'refunded'
+    paymentDetails: { // To store payment gateway info
+        authority: null,
+        refId: null, // Transaction reference from gateway
+        paymentDate: null,
+        method: null, // e.g., 'Zarinpal'
+        errorCode: null, // If payment failed
+        errorMessage: null,
+    },
+
+    // AI content generation fields
+    contentGenerationStatus: 'pending_approval', // 'pending_approval', 'approved_for_generation', 'in_progress', 'completed', 'failed'
+    generatedContentFileUrl: null,
+    generatedContentFileName: null,
+    aiPromptUsed: null,
+
+    fileUploads: [],
+    assignedTeacherId: null,
+    deliverables: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...additionalDetails,

@@ -1,120 +1,53 @@
 const { db } = require('../config/firebaseConfig');
-const { createResearchOrder } = require('../models/orderTypes');
+const { createResearchOrder, createStoreOrder } = require('../models/orderTypes'); // Consolidated imports
+const admin = require('firebase-admin'); // Added admin for FieldValue
+const { generateResearchContent } = require('../utils/aiContentService');
+const { uploadBufferToStorage } = require('../utils/storageService');
 
 const submitResearchOrder = async (req, res) => {
   try {
-    // For now, userId is taken from req.body.
-    // In a real app, this would come from an authenticated req.user object.
-    const { userId, educationLevel, subject, description, deadline, price } = req.body;
+    const { educationLevel, subject, description, deadline, price } = req.body;
+    const { uid: userId } = req.user; // Get userId from authenticated user
 
-    // Basic validation (model function also validates, but good to have here too)
-    if (!userId || !educationLevel || !subject || !description || !deadline) {
-      return res.status(400).json({ message: 'Missing required fields: userId, educationLevel, subject, description, deadline are required.' });
+    if (!userId || !educationLevel || !subject || !description || !deadline) { // userId is from req.user
+      return res.status(400).json({ message: 'Missing required fields: educationLevel, subject, description, deadline are required.' });
     }
-
-    // Create a new research order object
-    const newOrderData = createResearchOrder(
-      userId,
-      educationLevel,
-      subject,
-      description,
-      deadline,
-      price // price can be null
-      // additionalDetails can be passed if needed
-    );
-
-    // Add a new document with an auto-generated ID to the 'researchOrders' collection
-    const orderRef = await db.collection('researchOrders').add(newOrderData);
-
-    // Update the order data with the generated ID as orderId (optional, if needed within the doc)
-    // await orderRef.update({ orderId: orderRef.id });
-    // Or simply return the ID from orderRef.id
-
+    const newOrderData = createResearchOrder(userId, educationLevel, subject, description, deadline, price);
+    const orderRef = await db.collection('researchOrders').add({
+        ...newOrderData,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     console.log('Research order submitted successfully:', orderRef.id);
     res.status(201).json({
       message: 'Research order submitted successfully!',
       orderId: orderRef.id,
-      data: { ...newOrderData, id: orderRef.id } // Return the data including the new ID
     });
-
   } catch (error) {
     console.error('Error submitting research order:', error);
-    // If the error is from our model's validation
     if (error.message.startsWith("Missing required fields")) {
         return res.status(400).json({ message: error.message });
     }
     res.status(500).json({ message: 'Error submitting research order.', error: error.message });
   }
 };
-
-const { createStoreOrder } = require('../models/orderTypes'); // Add createStoreOrder
-const { createResearchOrder } = require('../models/orderTypes'); // Ensure this is also present or from same file
-
-const submitResearchOrder = async (req, res) => {
-  try {
-    // For now, userId is taken from req.body.
-    // In a real app, this would come from an authenticated req.user object.
-    const { userId, educationLevel, subject, description, deadline, price } = req.body;
-
-    // Basic validation (model function also validates, but good to have here too)
-    if (!userId || !educationLevel || !subject || !description || !deadline) {
-      return res.status(400).json({ message: 'Missing required fields: userId, educationLevel, subject, description, deadline are required.' });
-    }
-
-    // Create a new research order object
-    const newOrderData = createResearchOrder(
-      userId,
-      educationLevel,
-      subject,
-      description,
-      deadline,
-      price // price can be null
-      // additionalDetails can be passed if needed
-    );
-
-    // Add a new document with an auto-generated ID to the 'researchOrders' collection
-    const orderRef = await db.collection('researchOrders').add(newOrderData);
-
-    // Update the order data with the generated ID as orderId (optional, if needed within the doc)
-    // await orderRef.update({ orderId: orderRef.id });
-    // Or simply return the ID from orderRef.id
-
-    console.log('Research order submitted successfully:', orderRef.id);
-    res.status(201).json({
-      message: 'Research order submitted successfully!',
-      orderId: orderRef.id,
-      data: { ...newOrderData, id: orderRef.id } // Return the data including the new ID
-    });
-
-  } catch (error) {
-    console.error('Error submitting research order:', error);
-    // If the error is from our model's validation
-    if (error.message.startsWith("Missing required fields")) {
-        return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error submitting research order.', error: error.message });
-  }
-};
-
 
 const checkoutStoreOrder = async (req, res) => {
   try {
-    const { userId, items, shippingAddress } = req.body;
+    const { items, shippingAddress } = req.body;
+    const { uid: userId } = req.user; // Get userId from authenticated user
 
-    // Basic validation
-    if (!userId) return res.status(400).json({ message: 'User ID is required.' });
+    // userId is now from req.user
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'Cart items are required.' });
     if (!shippingAddress || typeof shippingAddress !== 'object') return res.status(400).json({ message: 'Shipping address is required.' });
 
     let calculatedTotalAmount = 0;
     const itemsForOrderModel = [];
 
-    // Inventory Check and Price Calculation
     for (const cartItem of items) {
       if (!cartItem.id || !cartItem.quantityInCart || cartItem.quantityInCart <= 0) {
         return res.status(400).json({ message: `Invalid cart item data for ID ${cartItem.id}.`});
       }
-
       if (cartItem.isBundle) {
         const bundleRef = db.collection('productBundles').doc(cartItem.id);
         const bundleDoc = await bundleRef.get();
@@ -122,8 +55,6 @@ const checkoutStoreOrder = async (req, res) => {
           return res.status(400).json({ message: `Bundle "${cartItem.name}" (ID: ${cartItem.id}) is no longer available.` });
         }
         const bundleData = bundleDoc.data();
-
-        // Check stock for each product within the bundle
         for (const bundleProductItem of bundleData.items) {
           const productRef = db.collection('products').doc(bundleProductItem.productId);
           const productDoc = await productRef.get();
@@ -136,15 +67,10 @@ const checkoutStoreOrder = async (req, res) => {
         }
         calculatedTotalAmount += bundleData.bundlePrice * cartItem.quantityInCart;
         itemsForOrderModel.push({
-          productId: cartItem.id, // For bundles, productId is the bundleId
-          productName: bundleData.name,
-          quantity: cartItem.quantityInCart,
-          priceAtPurchase: bundleData.bundlePrice,
-          isBundle: true,
-          bundleItems: bundleData.items, // Store constituent items for record keeping
+          productId: cartItem.id, productName: bundleData.name, quantity: cartItem.quantityInCart,
+          priceAtPurchase: bundleData.bundlePrice, isBundle: true, bundleItems: bundleData.items,
         });
-
-      } else { // It's a single product
+      } else {
         const productRef = db.collection('products').doc(cartItem.id);
         const productDoc = await productRef.get();
         if (!productDoc.exists || !productDoc.data().isActive) {
@@ -156,40 +82,23 @@ const checkoutStoreOrder = async (req, res) => {
         }
         calculatedTotalAmount += productData.price * cartItem.quantityInCart;
         itemsForOrderModel.push({
-          productId: cartItem.id,
-          productName: productData.name,
-          sku: productData.sku,
-          quantity: cartItem.quantityInCart,
-          priceAtPurchase: productData.price,
-          isBundle: false,
+          productId: cartItem.id, productName: productData.name, sku: productData.sku,
+          quantity: cartItem.quantityInCart, priceAtPurchase: productData.price, isBundle: false,
         });
       }
     }
-
-    const shippingCost = 0; // Placeholder, implement actual shipping calculation later
+    const shippingCost = 0;
     const finalAmount = calculatedTotalAmount + shippingCost;
-
-    const newStoreOrderData = createStoreOrder(
-      userId,
-      itemsForOrderModel,
-      shippingAddress,
-      calculatedTotalAmount, // This is sum of (priceAtPurchase * quantity)
-      { shippingCost, finalAmount } // Pass calculated final amount and shipping
-    );
-
+    const newStoreOrderData = createStoreOrder(userId, itemsForOrderModel, shippingAddress, calculatedTotalAmount, { shippingCost, finalAmount });
     const orderRef = await db.collection('storeOrders').add({
         ...newStoreOrderData,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-
     res.status(201).json({
       message: 'Store order initiated successfully and is pending payment.',
-      orderId: orderRef.id,
-      finalAmount: newStoreOrderData.finalAmount, // Use finalAmount from model which includes shipping etc.
-      items: newStoreOrderData.items, // Return processed items
+      orderId: orderRef.id, finalAmount: newStoreOrderData.finalAmount, items: newStoreOrderData.items,
     });
-
   } catch (error) {
     console.error('Error during store order checkout:', error);
     if (error.message.startsWith("Missing or invalid")) {
@@ -199,7 +108,134 @@ const checkoutStoreOrder = async (req, res) => {
   }
 };
 
+const generateResearchOrderContent = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!orderId) return res.status(400).json({ message: "Order ID is required." });
+    const orderRef = db.collection('researchOrders').doc(orderId);
+    const orderDoc = await orderRef.get();
+    if (!orderDoc.exists) return res.status(404).json({ message: "Research order not found." });
+    const orderData = orderDoc.data();
+    if (orderData.status !== 'paid' && orderData.status !== 'confirmed' && orderData.contentGenerationStatus !== 'pending_approval' && orderData.contentGenerationStatus !== 'approved_for_generation') {
+       if (orderData.contentGenerationStatus === 'in_progress') {
+            return res.status(400).json({ message: `Content generation is already in progress for order ${orderId}.` });
+       }
+    }
+    await orderRef.update({
+      contentGenerationStatus: 'in_progress',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    const prompt = `تولید محتوای تحقیق با مشخصات زیر:\nمقطع تحصیلی: ${orderData.educationLevel}\nموضوع: ${orderData.subject}\nتوضیحات کاربر: ${orderData.description}\n---\nلطفا یک تحقیق جامع و کامل با رعایت ساختار علمی (مقدمه، بدنه، نتیجه‌گیری، منابع در صورت امکان) تهیه فرمایید.`.trim();
+    await orderRef.update({ aiPromptUsed: prompt });
+    const generatedText = await generateResearchContent(prompt);
+    const contentBuffer = Buffer.from(generatedText, 'utf8');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const outputFileName = `research_${orderId}_${timestamp}.txt`;
+    const pathPrefix = `research_papers/${orderId}`;
+    const fileUrl = await uploadBufferToStorage(contentBuffer, outputFileName, 'text/plain; charset=utf-8', pathPrefix);
+    await orderRef.update({
+      generatedContentFileUrl: fileUrl, generatedContentFileName: outputFileName,
+      contentGenerationStatus: 'completed', updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    res.status(200).json({
+      message: `Content for research order ${orderId} generated and uploaded successfully.`,
+      fileUrl: fileUrl, fileName: outputFileName,
+    });
+  } catch (error) {
+    console.error(`Error generating content for research order ${req.params.orderId}:`, error);
+    if (req.params.orderId) {
+        const orderRefOnError = db.collection('researchOrders').doc(req.params.orderId);
+        const docCheck = await orderRefOnError.get();
+        if (docCheck.exists) {
+            await orderRefOnError.update({
+                contentGenerationStatus: 'failed', updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }).catch(updateError => console.error("Error reverting status on failure:", updateError));
+        }
+    }
+    res.status(500).json({ message: 'Error generating research content.', error: error.message });
+  }
+};
+
+const downloadResearchOrderFile = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { uid: userId } = req.user; // Get userId from authenticated user
+
+    // userId is now from req.user
+    if (!orderId) return res.status(400).json({ message: "Order ID is required." });
+
+    const orderRef = db.collection('researchOrders').doc(orderId);
+    const orderDoc = await orderRef.get();
+    if (!orderDoc.exists) return res.status(404).json({ message: "Research order not found." });
+
+    const orderData = orderDoc.data();
+    if (orderData.userId !== userId) return res.status(403).json({ message: "You are not authorized to download this file." });
+    if (orderData.paymentStatus !== 'paid') return res.status(403).json({ message: "Payment for this research order is not complete." });
+    if (orderData.contentGenerationStatus !== 'completed' || !orderData.generatedContentFileUrl || !orderData.generatedContentFileName) {
+      return res.status(404).json({ message: "Research file is not available or content generation is not complete." });
+    }
+
+    const bucket = admin.storage().bucket();
+    const filePath = `research_papers/${orderId}/${orderData.generatedContentFileName}`;
+    const file = bucket.file(filePath);
+
+    const [exists] = await file.exists();
+    if (!exists) {
+        console.error(`File not found in storage: ${filePath}`);
+        return res.status(404).json({ message: "File not found in storage. Please contact support."});
+    }
+
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(orderData.generatedContentFileName)}"`);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8'); // Assuming .txt
+
+    const readStream = file.createReadStream();
+    readStream.pipe(res);
+    readStream.on('error', (streamError) => {
+        console.error("Error streaming file from storage:", streamError);
+        if (!res.headersSent) res.status(500).json({ message: "Error streaming file."});
+    });
+  } catch (error) {
+    console.error(`Error downloading research file for order ${req.params.orderId}:`, error);
+    if (!res.headersSent) res.status(500).json({ message: 'Error downloading research file.', error: error.message });
+  }
+};
 
 module.exports = {
   submitResearchOrder,
-  checkoutStoreOrder, // Add new function
+  checkoutStoreOrder,
+  generateResearchOrderContent,
+  downloadResearchOrderFile,
+  getMyResearchOrders,
+};
+
+// Get research orders for a specific user
+const getMyResearchOrders = async (req, res) => {
+  try {
+    const { uid: userId } = req.user; // Get userId from authenticated user
+
+    // userId is now from req.user
+    // if (!userId) { // This check is no longer needed as verifyFirebaseToken ensures req.user exists
+    //   return res.status(400).json({ message: "User ID is required to fetch research orders." });
+    // }
+
+    const ordersSnapshot = await db.collection('researchOrders')
+                                   .where('userId', '==', userId)
+                                   .orderBy('createdAt', 'desc') // Show newest first
+                                   .get();
+
+    if (ordersSnapshot.empty) {
+      return res.status(200).json([]); // Return empty array if no orders found
+    }
+
+    const myOrders = [];
+    ordersSnapshot.forEach(doc => {
+      myOrders.push({ id: doc.id, ...doc.data() });
+    });
+
+    res.status(200).json(myOrders);
+
+  } catch (error) {
+    console.error(`Error fetching research orders for user ${userId}:`, error); // Use userId from req.user
+    res.status(500).json({ message: 'Error fetching research orders.', error: error.message });
+  }
+};
